@@ -1,13 +1,10 @@
 import csv
 import sys
-import os
 import datetime
-import math
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Button
+from matplotlib.widgets import Button, Slider
 import matplotlib.gridspec as gridspec
-import tkinter as tk
-from tkinter import ttk
+import numpy as np
 
 class Node:
     def __init__(self, data=None, components=None):
@@ -49,14 +46,14 @@ class Map:
         return self.nodes
     
     def draw_map(self):
-        fig = plt.figure(figsize=(10, 5))
+        fig = plt.figure(figsize=(12, 6))
         gs = gridspec.GridSpec(1, 2, width_ratios=[3, 1])
         
         ax_map = fig.add_subplot(gs[0])
         ax_panel = fig.add_subplot(gs[1])
         
         x = [node.data['latitude'] for node in self.nodes]
-        y = [node.data['longtitude'] for node in self.nodes]
+        y = [node.data['longitude'] for node in self.nodes]
         scatter = ax_map.scatter(x, y)
         
         ax_map.set_title("Windmill Map")
@@ -66,19 +63,25 @@ class Map:
         ax_panel.set_title("Node Components")
         ax_panel.axis('off')
         
+        slider_ax = fig.add_axes([0.93, 0.25, 0.02, 0.5], facecolor='lightgoldenrodyellow')
+        slider = Slider(slider_ax, 'Scroll', 0, 1, valinit=1, orientation='vertical')
+
         def update_panel(node):
             ax_panel.clear()
             ax_panel.set_title("Node Components")
             ax_panel.axis('off')
+            
             if node.components:
-                y_offset = 0.9
-                for component in node.components:
-                    ax_panel.text(0.1, y_offset, f"Name: {component.name}", transform=ax_panel.transAxes)
-                    ax_panel.text(0.1, y_offset - 0.1, f"Installation Date: {component.installation_date}", transform=ax_panel.transAxes)
-                    ax_panel.text(0.1, y_offset - 0.2, f"Current Lifetime: {component.current_lifetime}", transform=ax_panel.transAxes)
-                    y_offset -= 0.3
+                component_texts = [f"Name: {component.name}\nInstallation Date: {component.installation_date}\nCurrent Lifetime: {component.current_lifetime}" for component in node.components]
             else:
-                ax_panel.text(0.1, 0.9, "No components found.", transform=ax_panel.transAxes)
+                component_texts = ["No components found."]
+            
+            spacing = 0.2
+            scroll_offset = (1 - slider.val) * len(component_texts) * spacing
+            
+            for i, text in enumerate(component_texts):
+                ax_panel.text(0.1, 1 - spacing * (i + 1) + scroll_offset, text, transform=ax_panel.transAxes, fontsize=10, verticalalignment='top')
+            
             fig.canvas.draw_idle()
         
         def on_click(event):
@@ -88,94 +91,47 @@ class Map:
                     self.selected_node = self.nodes[ind['ind'][0]]
                     update_panel(self.selected_node)
         
-        def add_node(event):
-            root = tk.Tk()
-            root.title("Add Node")
+        def generate_pathway(event):
+            if len(self.nodes) < 2:
+                print("Not enough nodes to generate a pathway.")
+                return
             
-            node_frame = ttk.LabelFrame(root, text="Node Data")
-            node_frame.pack(padx=10, pady=10, fill="x", expand=True)
+            # Nearest Neighbor Algorithm
+            unvisited = self.nodes[:]
+            current_node = unvisited.pop(0)
+            path = [current_node]
             
-            node_data = {}
-            node_labels = ["Latitude", "Longitude", "Power", "Manufacturer", "Location"] # Need to make dynamic based on the keys
-            node_entries = {}
-            for label in node_labels:
-                row = ttk.Frame(node_frame)
-                row.pack(fill="x", expand=True)
-                ttk.Label(row, text=label).pack(side="left")
-                entry = ttk.Entry(row)
-                entry.pack(side="right", fill="x", expand=True)
-                node_entries[label] = entry
+            while unvisited:
+                next_node = min(unvisited, key=lambda node: np.hypot(node.data['latitude'] - current_node.data['latitude'], node.data['longitude'] - current_node.data['longitude']))
+                unvisited.remove(next_node)
+                path.append(next_node)
+                current_node = next_node
             
-            component_frame = ttk.LabelFrame(root, text="Components")
-            component_frame.pack(padx=10, pady=10, fill="x", expand=True)
-            
-            components = []
-            component_entries = []
-            
-            def add_component():
-                component_data = {}
-                component_labels = ["Name", "Lifetime", "Serial Number", "Installation Date (YYYY-MM-DD)"] #Need to make dynamic based on the keys
-                component_entry = {}
-                for label in component_labels:
-                    row = ttk.Frame(component_frame)
-                    row.pack(fill="x", expand=True)
-                    ttk.Label(row, text=label).pack(side="left")
-                    entry = ttk.Entry(row)
-                    entry.pack(side="right", fill="x", expand=True)
-                    component_entry[label] = entry
-                component_entries.append(component_entry)
-            
-            add_component_button = ttk.Button(root, text="Add Component", command=add_component)
-            add_component_button.pack(pady=5)
-            
-            def submit():
-                for label in node_labels:
-                    node_data[label.lower()] = node_entries[label].get()
-                
-                for component_entry in component_entries:
-                    name = component_entry["Name"].get()
-                    lifetime = int(component_entry["Lifetime"].get())
-                    serial_number = component_entry["Serial Number"].get()
-                    installation_date = component_entry["Installation Date (YYYY-MM-DD)"].get()
-                    installation_date = datetime.datetime.strptime(installation_date, "%Y-%m-%d").date()
-                    component = Component(node=None, name=name, lifetime=lifetime, serial_number=serial_number, installation_date=installation_date)
-                    components.append(component)
-                
-                new_node = Node(data=node_data, components=components)
-                self.add_node(new_node)
-                ax_map.clear()
-                ax_map.set_title("Windmill Map")
-                ax_map.set_xlabel("Latitude")
-                ax_map.set_ylabel("Longitude")
-                x = [node.data['latitude'] for node in self.nodes]
-                y = [node.data['longtitude'] for node in self.nodes]
-                ax_map.scatter(x, y)
-                fig.canvas.draw_idle()
-                root.destroy()
-            
-            submit_button = ttk.Button(root, text="Submit", command=submit)
-            submit_button.pack(pady=5)
-            
-            add_component()  # Add default components
-            add_component()  # Add default components
-            
-            root.mainloop()
+            # Draw the path
+            path_x = [node.data['latitude'] for node in path]
+            path_y = [node.data['longitude'] for node in path]
+            ax_map.plot(path_x, path_y, 'r-', label='Pathway')
+            ax_map.legend()
+            fig.canvas.draw_idle()
 
-        add_node_button_ax = fig.add_axes([0.8, 0.05, 0.1, 0.075])
-        add_node_button = Button(add_node_button_ax, 'Add Node')
-        add_node_button.on_clicked(add_node)
+        # Center the generate pathway button beneath the slider
+        generate_pathway_button_ax = fig.add_axes([0.85, 0.05, 0.1, 0.075])
+        generate_pathway_button = Button(generate_pathway_button_ax, 'Generate Pathway')
+        generate_pathway_button.on_clicked(generate_pathway)
+
+        slider.on_changed(lambda val: update_panel(self.selected_node) if self.selected_node else None)
 
         fig.canvas.mpl_connect('button_press_event', on_click)
         plt.show()
 
 def generateDemoMap():
     nodeData1 = {"latitude": 100, 
-                 "longtitude": 120,
+                 "longitude": 120,
                  "power": 1.5, 
                  "manufacturer": "WindTech", 
                  "location": "North Field"}
     nodeData2 = {"latitude": 50, 
-                 "longtitude": 70,
+                 "longitude": 70,
                  "power": 1.5, 
                  "manufacturer": "WindTech", 
                  "location": "North Field"}
@@ -197,12 +153,39 @@ def main(file_path=None):
         try:
             with open(file_path, mode='r') as file:
                 reader = csv.reader(file)
+                next(reader)  # Skip the header row
                 nodes = []
+                current_node_data = None
+                current_components = []
+                
                 for row in reader:
-                    x, y = map(float, row)
-                    nodes.append(Node(x, y))
+                    latitude, longitude, component_name, lifetime, serial_number, installation_date = row
+                    latitude = float(latitude)
+                    longitude = float(longitude)
+                    lifetime = int(lifetime)
+                    installation_date = datetime.datetime.strptime(installation_date, "%Y-%m-%d").date()
+                    
+                    # Check if we are still on the same node
+                    if current_node_data is None or (current_node_data['latitude'] != latitude or current_node_data['longitude'] != longitude):
+                        # If we have collected components for a node, add it to the list
+                        if current_node_data is not None:
+                            nodes.append(Node(data=current_node_data, components=current_components))
+                        
+                        # Start a new node
+                        current_node_data = {"latitude": latitude, "longitude": longitude}
+                        current_components = []
+                    
+                    # Add the component to the current node
+                    component = Component(node=None, name=component_name, lifetime=lifetime, serial_number=serial_number, installation_date=installation_date)
+                    current_components.append(component)
+                
+                # Add the last node
+                if current_node_data is not None:
+                    nodes.append(Node(data=current_node_data, components=current_components))
+                
                 windmill_map = Map(nodes)
                 print(f"Loaded {len(windmill_map.get_nodes())} nodes from file.")
+                windmill_map.draw_map()
         except FileNotFoundError:
             print(f"File {file_path} not found.")
 
