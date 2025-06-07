@@ -124,70 +124,54 @@ class Map:
         fig.canvas.mpl_connect('button_press_event', on_click)
         plt.show()
 
-def generateDemoMap():
-    nodeData1 = {"latitude": 100, 
-                 "longitude": 120,
-                 "power": 1.5, 
-                 "manufacturer": "WindTech", 
-                 "location": "North Field"}
-    nodeData2 = {"latitude": 50, 
-                 "longitude": 70,
-                 "power": 1.5, 
-                 "manufacturer": "WindTech", 
-                 "location": "North Field"}
-    component1 = Component(node=None, name="Rotor", lifetime=10, serial_number="RT12345", installation_date=datetime.date(2023, 1, 1))
-    component2 = Component(node=None, name="Blade", lifetime=15, serial_number="BL67890", installation_date=datetime.date(2022, 6, 15))
-    node1 = Node(data=nodeData1, components=[component1, component2])
-    node2 = Node(data=nodeData2)
-    windmill_map = Map([node1, node2])
-    windmill_map.draw_map()
-    return windmill_map
-
-def main(file_path=None):
-    if file_path is None:
-        return print(f"No file path inputed. If you want to generate a demo map, please input 'Demo' as the file path.")
-    elif file_path == 'Demo':
-        generateDemoMap()
-        return 
-    else:
-        try:
-            with open(file_path, mode='r') as file:
-                reader = csv.reader(file)
-                next(reader)  # Skip the header row
-                nodes = []
-                current_node_data = None
-                current_components = []
-                
-                for row in reader:
-                    latitude, longitude, component_name, lifetime, serial_number, installation_date = row
-                    latitude = float(latitude)
-                    longitude = float(longitude)
-                    lifetime = int(lifetime)
-                    installation_date = datetime.datetime.strptime(installation_date, "%Y-%m-%d").date()
-                    
-                    # Check if we are still on the same node
-                    if current_node_data is None or (current_node_data['latitude'] != latitude or current_node_data['longitude'] != longitude):
-                        # If we have collected components for a node, add it to the list
-                        if current_node_data is not None:
-                            nodes.append(Node(data=current_node_data, components=current_components))
-                        
-                        # Start a new node
-                        current_node_data = {"latitude": latitude, "longitude": longitude}
-                        current_components = []
-                    
-                    # Add the component to the current node
-                    component = Component(node=None, name=component_name, lifetime=lifetime, serial_number=serial_number, installation_date=installation_date)
-                    current_components.append(component)
-                
-                # Add the last node
+def opendata(file_path):
+    with open(file_path, mode='r') as file:
+        reader = csv.reader(file)
+        next(reader)  # Skip the header row
+        nodes = []
+        current_node_data = None
+        current_components = []
+        
+        for row in reader:
+            latitude, longitude, component_name, lifetime, serial_number, installation_date = row
+            latitude = float(latitude)
+            longitude = float(longitude)
+            lifetime = int(lifetime)
+            installation_date = datetime.datetime.strptime(installation_date, "%Y-%m-%d").date()
+            
+            # Check if we are still on the same node
+            if current_node_data is None or (current_node_data['latitude'] != latitude or current_node_data['longitude'] != longitude):
+                # If we have collected components for a node, add it to the list
                 if current_node_data is not None:
                     nodes.append(Node(data=current_node_data, components=current_components))
                 
-                windmill_map = Map(nodes)
-                print(f"Loaded {len(windmill_map.get_nodes())} nodes from file.")
-                windmill_map.draw_map()
+                # Start a new node
+                current_node_data = {"latitude": latitude, "longitude": longitude}
+                current_components = []
+            
+            # Add the component to the current node
+            component = Component(node=None, name=component_name, lifetime=lifetime, serial_number=serial_number, installation_date=installation_date)
+            current_components.append(component)
+        
+        # Add the last node
+        if current_node_data is not None:
+            nodes.append(Node(data=current_node_data, components=current_components))
+        
+        windmill_map = Map(nodes)
+        print(f"Loaded {len(windmill_map.get_nodes())} nodes from file.")
+        windmill_map.draw_map()
+    
+    
+def main(file_path=None):
+    if file_path is None:
+        return print(f"No file path inputed. If you want to generate a demo map, use the datamaker.py to create d .")
+    else:
+        try:
+            opendata(file_path)
         except FileNotFoundError:
-            print(f"File {file_path} not found.")
+            print(f"File not found: {file_path}")
+        except Exception as e:
+            print(f"An error occurred while processing the file: {e}")            
 
 if __name__ == "__main__":
     main(sys.argv[1] if len(sys.argv) > 1 else None)
