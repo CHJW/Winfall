@@ -4,9 +4,12 @@ import datetime
 import tkinter as tk
 from tkinter import messagebox
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Button, Slider
+from matplotlib.widgets import Button, Slider, TextBox
 import numpy as np
 import math
+from functools import partial
+import matplotlib.patches as patches
+import matplotlib.transforms as transforms
 
 class Component:
     """Represents a component of a node (e.g., blade, gearbox)."""
@@ -174,24 +177,6 @@ class Node:
                   f"Health={component.health_score:.2f}, "
                   f"Failure Risk={component.failure_probability:.2f}")
 
-
-class CostCalculator:
-    """Handles all cost calculations for maintenance operations."""
-    def __init__(self):
-        self.cost_per_distance_unit = 5.0  # $5 per unit distance
-        self.base_crew_cost_per_day = 2000
-        self.base_vessel_cost_per_day = 5000
-        
-    def calculate_transportation_cost(self, distance):
-        """Calculate cost based on distance traveled."""
-        return distance * self.cost_per_distance_unit
-    
-    def calculate_operation_cost(self, repair_hours):
-        """Calculate crew and vessel costs for a repair operation."""
-        days_for_repair = math.ceil(repair_hours / 24.0)
-        return (self.base_crew_cost_per_day + self.base_vessel_cost_per_day) * days_for_repair
-
-
 class Map:
     """Manages the nodes, calculations, and visualization of the map."""
     def __init__(self, nodes=None):
@@ -200,7 +185,33 @@ class Map:
         self.cost_calculator = CostCalculator()
         self.distance_matrix = None
         self.cost_matrix = None
-        self.repair_threshold_ratio = 0.52  # 3:1 benefit to cost ratio
+        self.path_artists = [] # To store plotted route for easy clearing
+        self.selected_node_circle =  None
+        self.node_circles = []  # To store node circles for visualization
+
+        
+        # --- Configuration for interactive UI fields ---
+        # This structure is agnostic to the field it can change.
+        # To add a new field, simply add a new entry to this dictionary.
+        self.interactive_fields = {
+            'repair_threshold_ratio': {
+                'label': 'Repair Threshold Ratio',
+                'initial': '0.52',
+                'target_obj': self,
+                'target_attr': 'repair_threshold_ratio',
+                'type': float
+            },
+            'cost_per_distance_unit': {
+                'label': 'Cost Per Distance ($)',
+                'initial': '5.0',
+                'target_obj': self.cost_calculator,
+                'target_attr': 'cost_per_distance_unit',
+                'type': float
+            }
+        }
+        # Initialize attributes from the dictionary
+        for key, config in self.interactive_fields.items():
+            setattr(config['target_obj'], config['target_attr'], config['type'](config['initial']))
 
     def add_node(self, node):
         """Add a node to the map."""
@@ -222,30 +233,27 @@ class Map:
                     lat1, lon1 = self.nodes[i].attributes['latitude'], self.nodes[i].attributes['longitude']
                     lat2, lon2 = self.nodes[j].attributes['latitude'], self.nodes[j].attributes['longitude']
                     
-                    # Euclidean distance (as a proxy for more complex geographic calculations)
                     distance = np.sqrt((lat2 - lat1)**2 + (lon2 - lon1)**2)
                     self.distance_matrix[i][j] = distance
                     self.cost_matrix[i][j] = self.cost_calculator.calculate_transportation_cost(distance)
         
-        print(f"Generated cost matrix for {num_nodes} nodes")
+        print(f"Generated cost matrix for {num_nodes} nodes based on current cost settings.")
 
     def calculate_all_repair_priorities(self):
         """Calculate repair priority scores for all nodes."""
-        # Calculate average transportation cost if cost matrix exists
         avg_transport_cost = 1000  # Default value
         if self.cost_matrix is not None and self.cost_matrix.size > 0:
             avg_transport_cost = np.mean(self.cost_matrix[self.cost_matrix > 0])
         
-        # Calculate priority for each node
         for node in self.nodes:
             node.calculate_repair_priority_score(avg_transport_cost)
     
     def filter_nodes_for_repair(self):
         """Filter nodes that meet the minimum repair threshold criteria."""
-        worthy_nodes = [node for node in self.nodes 
-                        if node.meets_repair_threshold(self.repair_threshold_ratio)]
+        threshold = self.repair_threshold_ratio
+        worthy_nodes = [node for node in self.nodes if node.meets_repair_threshold(threshold)]
         
-        print(f"Filtered {len(worthy_nodes)} nodes above threshold ratio of {self.repair_threshold_ratio}")
+        print(f"Filtered {len(worthy_nodes)} nodes above threshold ratio of {threshold}")
         return worthy_nodes
 
     def update_all_calculations(self):
@@ -253,39 +261,34 @@ class Map:
         for node in self.nodes:
             node.update_calculations()
         
-        # Regenerate matrices if nodes have changed
         if self.nodes:
             self.generate_cost_matrix()
         
-        # Recalculate priorities
         self.calculate_all_repair_priorities()
 
     def get_map_summary(self):
         """Get a summary of the entire map status."""
-        total_nodes = len(self.nodes)
-        repair_worthy_nodes = len(self.filter_nodes_for_repair())
-        total_repair_cost = sum(node.total_repair_cost for node in self.nodes)
-        total_opportunity_cost = sum(node.total_opportunity_cost for node in self.nodes)
+        # Temporarily filter to get the count without printing the filter message
+        worthy_nodes = [node for node in self.nodes if node.meets_repair_threshold(self.repair_threshold_ratio)]
         
         return {
-            'total_nodes': total_nodes,
-            'repair_worthy_nodes': repair_worthy_nodes,
-            'total_repair_cost': total_repair_cost,
-            'total_opportunity_cost': total_opportunity_cost,
+            'total_nodes': len(self.nodes),
+            'repair_worthy_nodes': len(worthy_nodes),
+            'total_repair_cost': sum(node.total_repair_cost for node in self.nodes),
+            'total_opportunity_cost': sum(node.total_opportunity_cost for node in self.nodes),
             'repair_threshold': self.repair_threshold_ratio
         }
 
     def print_map_summary(self):
         """Print a comprehensive summary of the map."""
         summary = self.get_map_summary()
-        print(f"Map Summary:")
+        print("Map Summary:")
         print(f"Total Nodes: {summary['total_nodes']}")
         print(f"Nodes meeting repair threshold: {summary['repair_worthy_nodes']}")
         print(f"Total repair cost across all nodes: ${summary['total_repair_cost']:,.2f}")
         print(f"Total opportunity cost across all nodes: ${summary['total_opportunity_cost']:,.2f}")
         print(f"Repair threshold ratio: {summary['repair_threshold']}")
         
-        # Print individual node summaries
         print("\nIndividual Node Details:")
         for node in self.nodes:
             node.print_node_summary()
@@ -295,9 +298,7 @@ class Map:
         if not filtered_nodes:
             return []
         
-        # Simple greedy algorithm: start with the highest priority node and travel to the 'best' next node
         unvisited_nodes = filtered_nodes[:]
-        # Start with the node having the highest priority score
         current_node = max(unvisited_nodes, key=lambda node: node.repair_priority_score)
         unvisited_nodes.remove(current_node)
         path = [current_node]
@@ -309,10 +310,8 @@ class Map:
             
             for candidate_node in unvisited_nodes:
                 candidate_node_index = self.nodes.index(candidate_node)
-                # Cost to travel from current to candidate node
                 transport_cost = self.cost_matrix[current_node_index][candidate_node_index] if self.cost_matrix is not None else 1
                 
-                # Score = priority / transport_cost (higher is better)
                 score = candidate_node.repair_priority_score / max(transport_cost, 1)
                 
                 if score > max_score:
@@ -324,27 +323,21 @@ class Map:
                 path.append(best_next_node)
                 current_node = best_next_node
             else:
-                # Should not happen if unvisited_nodes is not empty
                 break
         
         print(f"Optimized route with {len(path)} nodes")
         return path
     
     def draw_map(self):
-        
-        fig, self.map_ax = plt.subplots(figsize=(16, 10))
-        plt.subplots_adjust(left=0.08, right=0.7, top=0.9, bottom=0.1)
+        fig, self.map_ax = plt.subplots(figsize=(16, 12))
+        plt.subplots_adjust(left=0.08, right=0.7, top=0.9, bottom=0.10)
 
         latitudes = [node.attributes['latitude'] for node in self.nodes]
         longitudes = [node.attributes['longitude'] for node in self.nodes]
         
-        # --- Color nodes by cluster ---
-        clusters = {node.attributes.get('cluster_name', 'Unknown') for node in self.nodes}
-        unique_clusters = sorted(list(clusters))
-        # Use a colormap to assign a unique color to each cluster
-        colors = plt.cm.get_cmap('tab10', len(unique_clusters))
-        cluster_color_map = {cluster: colors(i) for i, cluster in enumerate(unique_clusters)}
-        
+        clusters = sorted(list({node.attributes.get('cluster_name', 'Unknown') for node in self.nodes}))
+        colors = plt.cm.get_cmap('tab10', len(clusters))
+        cluster_color_map = {cluster: colors(i) for i, cluster in enumerate(clusters)}
         node_colors = [cluster_color_map[node.attributes.get('cluster_name', 'Unknown')] for node in self.nodes]
 
         self.scatter = self.map_ax.scatter(latitudes, longitudes, c=node_colors, s=100, alpha=0.8, picker=True)
@@ -354,28 +347,49 @@ class Map:
         self.map_ax.set_ylabel("Longitude")
         self.map_ax.grid(True, linestyle='--', alpha=0.6)
 
-        # --- Create a custom legend for clusters ---
         legend_elements = [plt.Line2D([0], [0], marker='o', color='w', label=cluster,
                                       markerfacecolor=color, markersize=10)
                            for cluster, color in cluster_color_map.items()]
         self.map_ax.legend(handles=legend_elements, title="Clusters")
         
-        # --- Information Panel ---
-        info_panel_ax = fig.add_axes([0.72, 0.4, 0.25, 0.5]) # [left, bottom, width, height]
+        info_panel_ax = fig.add_axes([0.72, 0.55, 0.25, 0.35])
         info_panel_ax.set_title("Node Details")
         info_panel_ax.axis('off')
 
-        # --- Generate Pathway Button ---
-        generate_button_ax = fig.add_axes([0.72, 0.25, 0.25, 0.06])
-        generate_button = Button(generate_button_ax, 'Generate Optimized Pathway')
+        # --- Dynamic Input Fields ---
+        text_boxes = {}
+        field_y_pos = 0.25
+        for key, config in self.interactive_fields.items():
+            ax_label = fig.add_axes([0.72, field_y_pos, 0.1, 0.04])
+            ax_label.text(0.5, 0.5, config['label'], ha='center', va='center', fontsize=9)
+            ax_label.axis('off')
+
+            ax_box = fig.add_axes([0.83, field_y_pos, 0.14, 0.04])
+            text_box = TextBox(ax_box, '', initial=config['initial'])
+            
+            # Create a partial function to pass arguments to the callback
+            update_callback = partial(self._create_update_callback, 
+                                      text_box=text_box,
+                                      target_obj=config['target_obj'], 
+                                      attr=config['target_attr'],
+                                      value_type=config['type'])
+            text_box.on_submit(update_callback)
+            text_boxes[key] = text_box
+            field_y_pos -= 0.06 # Decrement y-position for the next field
+
+        # --- Buttons ---
+        generate_button_ax = fig.add_axes([0.72, 0.1, 0.13, 0.06])
+        generate_button = Button(generate_button_ax, 'Generate Pathway')
         
+        reset_button_ax = fig.add_axes([0.86, 0.1, 0.11, 0.06])
+        reset_button = Button(reset_button_ax, 'Reset Map')
 
         def update_info_panel(node):
             info_panel_ax.clear()
             info_panel_ax.set_title("Node Details")
             info_panel_ax.axis('off')
             
-            if node and node.components:
+            if node:
                 info_text = (f"Node ID: {node.attributes.get('node_id', 'N/A')}\n"
                              f"Cluster: {node.attributes.get('cluster_name', 'N/A')}\n"
                              f"Priority Score: {node.repair_priority_score:.2f}\n"
@@ -395,45 +409,68 @@ class Map:
                 all_text = "Click on a node to see details."
             
             info_panel_ax.text(0.05, 0.95, all_text, transform=info_panel_ax.transAxes, 
-                               fontsize=9, verticalalignment='top', fontfamily='monospace',
-                               wrap=True)
+                               fontsize=9, verticalalignment='top', fontfamily='monospace', wrap=True)
             fig.canvas.draw_idle()
 
         def on_click(event):
             if event.inaxes == self.map_ax:
                 contains, index_info = self.scatter.contains(event)
                 if contains:
-                    self.selected_node = self.nodes[index_info['ind'][0]]
+                    node_index = index_info['ind'][0]
+                    self.selected_node = self.nodes[node_index]
                     update_info_panel(self.selected_node)
+
+                    x, y = self.scatter.get_offsets()[node_index]
+
+                    # Remove previous circle if it exists
+                    for circle in self.node_circles:
+                        circle.remove()
+                    self.node_circles.clear()
+
+                    x, y = self.scatter.get_offsets()[node_index]
+
+
+                    # Create a circle in display coordinates
+                    
+                    new_circle = patches.Circle(
+                        (x, y), radius=0.01,  # radius in data units
+                        color='red', fill=False, linewidth=2, zorder=10
+                    )
+
+                    self.map_ax.add_patch(new_circle)
+                    self.node_circles.append(new_circle)
+
+                    fig.canvas.draw_idle()
+
 
         def generate_pathway_action(event):
             print("\n=== GENERATING OPTIMIZED MAINTENANCE PATHWAY ===")
-            
-            # Update all calculations using the new refactored methods
+            reset_map_action(event) # Clear previous path before drawing a new one
+
             self.update_all_calculations()
-            
-            # Filter nodes for repair using the new method
             worthy_nodes = self.filter_nodes_for_repair()
             optimized_path = self.optimize_route(worthy_nodes)
             
             if not optimized_path:
                 print("No nodes meet the repair threshold criteria.")
-                # Add text to the plot to inform the user
-                self.map_ax.text(0.5, 0.5, "No high-priority repairs found.", 
-                                 transform=self.map_ax.transAxes, ha='center',
-                                 fontsize=14, color='red', bbox=dict(facecolor='white', alpha=0.8))
+                no_repairs_text = self.map_ax.text(0.5, 0.5, "No high-priority repairs found.", 
+                                       transform=self.map_ax.transAxes, ha='center',
+                                       fontsize=14, color='red', bbox=dict(facecolor='white', alpha=0.8))
+                self.path_artists.append(no_repairs_text) # Add to artists to be cleared
                 fig.canvas.draw_idle()
                 return
             
             path_lat = [node.attributes['latitude'] for node in optimized_path]
             path_lon = [node.attributes['longitude'] for node in optimized_path]
-            self.map_ax.plot(path_lat, path_lon, 'r-o', linewidth=2, markersize=8, label='Optimized Route')
             
-            self.map_ax.scatter(path_lat[0], path_lon[0], c='lime', s=250, marker='*', label='Start Point', zorder=5)
+            route_line, = self.map_ax.plot(path_lat, path_lon, 'r-o', linewidth=2, markersize=8, label='Optimized Route')
+            start_marker = self.map_ax.scatter(path_lat[0], path_lon[0], c='lime', s=250, marker='*', label='Start Point', zorder=5)
+            self.path_artists.extend([route_line, start_marker])
+            
             if len(path_lat) > 1:
-                self.map_ax.scatter(path_lat[-1], path_lon[-1], c='red', s=200, marker='X', label='End Point', zorder=5)
-            
-            # Reorder legend to show route info first
+                end_marker = self.map_ax.scatter(path_lat[-1], path_lon[-1], c='red', s=200, marker='X', label='End Point', zorder=5)
+                self.path_artists.append(end_marker)
+
             handles, labels = self.map_ax.get_legend_handles_labels()
             self.map_ax.legend(handles, labels)
             fig.canvas.draw_idle()
@@ -447,10 +484,60 @@ class Map:
             if total_cost > 0:
                 print(f"Overall benefit/cost ratio: {total_benefit/total_cost:.2f}")
 
+        def reset_map_action(event):
+            """Clears the generated path and markers from the map."""
+            if not self.path_artists:
+                print("Map is already clear. Nothing to reset.")
+                return
+            
+            print("Resetting map view...")
+            for artist in self.path_artists:
+                artist.remove()
+            self.path_artists.clear()
+            
+            # Redraw legend without path elements
+            handles, labels = self.map_ax.get_legend_handles_labels()
+            # Filter out the labels associated with the path
+            filtered_handles = [h for h, l in zip(handles, labels) if l not in ['Optimized Route', 'Start Point', 'End Point']]
+            filtered_labels = [l for l in labels if l not in ['Optimized Route', 'Start Point', 'End Point']]
+            self.map_ax.legend(filtered_handles, filtered_labels, title="Clusters")
+
+            fig.canvas.draw_idle()
+
         generate_button.on_clicked(generate_pathway_action)
+        reset_button.on_clicked(reset_map_action)
         fig.canvas.mpl_connect('button_press_event', on_click)
-        update_info_panel(None) # Initial instruction
+        update_info_panel(None)
         plt.show()
+
+    def _create_update_callback(self, text, text_box, target_obj, attr, value_type):
+        """A generic callback factory for handling text box submissions."""
+        try:
+            new_value = value_type(text)
+            setattr(target_obj, attr, new_value)
+            text_box.color = 'white' # Reset color on success
+            print(f"Updated '{attr}' to {new_value}")
+        except ValueError:
+            print(f"Invalid input: '{text}'. Please enter a valid {value_type.__name__}.")
+            text_box.color = '0.9' # Indicate error with a gray background
+        plt.gcf().canvas.draw_idle()
+
+
+class CostCalculator:
+    """Handles all cost calculations for maintenance operations."""
+    def __init__(self):
+        self.cost_per_distance_unit = 5.0  # $5 per unit distance
+        self.base_crew_cost_per_day = 2000
+        self.base_vessel_cost_per_day = 5000
+        
+    def calculate_transportation_cost(self, distance):
+        """Calculate cost based on distance traveled."""
+        return distance * self.cost_per_distance_unit
+    
+    def calculate_operation_cost(self, repair_hours):
+        """Calculate crew and vessel costs for a repair operation."""
+        days_for_repair = math.ceil(repair_hours / 24.0)
+        return (self.base_crew_cost_per_day + self.base_vessel_cost_per_day) * days_for_repair
 
 def load_data_from_csv(file_path):
     """Loads node and component data from a CSV file."""
