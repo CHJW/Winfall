@@ -13,6 +13,9 @@ class DataMakerGUI:
         self.root.title("Wind Farm Data Generator")
         self.root.geometry("500x700")
         
+        # Track last generated file
+        self.last_generated_file = None
+        
         # Default values
         self.default_values = {
             'filename': 'nodes_data',
@@ -136,7 +139,7 @@ class DataMakerGUI:
         clear_button.grid(row=0, column=1, padx=5)
         
         # Cancel Button
-        cancel_button = ttk.Button(button_frame, text="Cancel", command=self.root.quit)
+        cancel_button = ttk.Button(button_frame, text="Cancel", command=self.root.destroy)
         cancel_button.grid(row=0, column=2, padx=5)
         
     def clear_values(self):
@@ -302,13 +305,18 @@ class DataMakerGUI:
         # Write to CSV
         self.write_csv(nodes_data, csv_filename)
         
+        # Store the generated filename
+        self.last_generated_file = csv_filename
+        
         # Success message
         messagebox.showinfo("Success", 
                            f"CSV file '{csv_filename}' has been created with {len(nodes_data)} turbines.\n"
                            f"Total components: {sum(len(node['components']) for node in nodes_data)}\n"
                            f"Wind farm clusters: {[cluster['name'] for cluster in wind_farm_clusters]}")
         
+        # Ensure window is properly closed
         self.root.quit()
+        self.root.destroy()
     
     def generate_clustered_coordinates(self, cluster, spread_km=10):
         """Generate coordinates within a cluster with realistic spread"""

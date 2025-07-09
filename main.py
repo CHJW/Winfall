@@ -1,8 +1,10 @@
 import csv
 import sys
 import datetime
+import os
+import random
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button, Slider, TextBox
 import numpy as np
@@ -629,43 +631,156 @@ def load_data_from_csv(file_path):
         print(f"Total components: {sum(len(node.components) for node in nodes)}")
         return asset_map
 
-def show_startup_instructions():
-    """Displays a modal dialog with instructions and returns user choice."""
+def show_startup_instructions(file_path=None):
+    """Displays a modal dialog with instructions and data source options."""
     root = tk.Tk()
-    root.withdraw()  # Hide the main tkinter window
+    root.title("Maintenance Optimization Tool")
+    root.geometry("500x400")
+    root.resizable(False, False)
     
-    title = "User Instructions"
-    message = (
+    # Center the window
+    root.update_idletasks()
+    x = (root.winfo_screenwidth() // 2) - (500 // 2)
+    y = (root.winfo_screenheight() // 2) - (400 // 2)
+    root.geometry(f"500x400+{x}+{y}")
+    
+    main_frame = ttk.Frame(root, padding="20")
+    main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    
+    # Title
+    title_label = ttk.Label(main_frame, text="Maintenance Optimization Tool", 
+                           font=("Arial", 16, "bold"))
+    title_label.grid(row=0, column=0, columnspan=2, pady=(0, 20))
+    
+    # Instructions
+    instructions = (
         "Welcome to the Maintenance Optimization Tool.\n\n"
         "Instructions:\n"
-        "1. The map displays all assets, color-coded by their cluster.\n"
-        "2. Click on any node on the map to view its details in the panel.\n"
-        "3. Click 'Generate Optimized Pathway' to run the analysis.\n\n"
-        "Do you wish to proceed?"
+        "• The map displays all assets, color-coded by their cluster\n"
+        "• Click on any node on the map to view its details in the panel\n"
+        "• Click 'Generate Optimized Pathway' to run the analysis\n\n"
     )
     
-    # askquestion returns 'yes' or 'no'
-    response = messagebox.askquestion(title, message, icon='info')
+    instructions_label = ttk.Label(main_frame, text=instructions, 
+                                  font=("Arial", 10), justify=tk.LEFT)
+    instructions_label.grid(row=1, column=0, columnspan=2, pady=(0, 20), sticky=tk.W)
+    
+    # Data source status
+    if file_path and os.path.exists(file_path):
+        status_text = f"Data Source: {file_path}"
+        status_color = "green"
+        show_generate_button = False
+    else:
+        status_text = "No data source detected"
+        status_color = "red"
+        show_generate_button = True
+    
+    status_label = ttk.Label(main_frame, text=status_text, 
+                            font=("Arial", 11, "bold"), foreground=status_color)
+    status_label.grid(row=2, column=0, columnspan=2, pady=(0, 20))
+    
+    # Store result
+    result = {'proceed': False, 'file_path': file_path}
+    
+    def on_proceed():
+        result['proceed'] = True
+        root.quit()
+    
+    def on_cancel():
+        result['proceed'] = False
+        root.quit()
+    
+    def on_generate():
+        # Launch data generator
+        try:
+            from datamaker import DataMakerGUI
+            root.withdraw()  # Hide current window
+            
+            # Create and run datamaker
+            datamaker = DataMakerGUI()
+            datamaker.run()
+            
+            # Check if a file was created
+            if hasattr(datamaker, 'last_generated_file') and datamaker.last_generated_file:
+                # Show loading popup
+                loading_window = tk.Toplevel(root)
+                loading_window.title("Generating Map")
+                loading_window.geometry("300x100")
+                loading_window.resizable(False, False)
+                
+                # Center the loading window
+                loading_window.update_idletasks()
+                x = (loading_window.winfo_screenwidth() // 2) - (300 // 2)
+                y = (loading_window.winfo_screenheight() // 2) - (100 // 2)
+                loading_window.geometry(f"300x100+{x}+{y}")
+                
+                loading_label = ttk.Label(loading_window, text="Generating map...", 
+                                        font=("Arial", 12))
+                loading_label.pack(expand=True)
+                
+                # Update the result and close loading window after a short delay
+                def finish_loading():
+                    result['file_path'] = datamaker.last_generated_file
+                    loading_window.destroy()
+                    root.deiconify()  # Show main window again
+                    status_label.config(text=f"Data Source: {result['file_path']}", 
+                                       foreground="green")
+                    generate_button.grid_remove()
+                
+                loading_window.after(2000, finish_loading)  # 2 second delay
+                loading_window.transient(root)
+                loading_window.grab_set()
+                
+            else:
+                # No file was created, just show main window again
+                root.deiconify()
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to launch data generator: {e}")
+            root.deiconify()  # Show window again
+    
+    # Buttons frame
+    button_frame = ttk.Frame(main_frame)
+    button_frame.grid(row=3, column=0, columnspan=2, pady=20)
+    
+    if show_generate_button:
+        generate_button = ttk.Button(button_frame, text="Generate Data Source", 
+                                    command=on_generate)
+        generate_button.grid(row=0, column=0, padx=5)
+    
+    proceed_button = ttk.Button(button_frame, text="Proceed", command=on_proceed)
+    proceed_button.grid(row=0, column=1 if show_generate_button else 0, padx=5)
+    
+    cancel_button = ttk.Button(button_frame, text="Cancel", command=on_cancel)
+    cancel_button.grid(row=0, column=2 if show_generate_button else 1, padx=5)
+    
+    root.mainloop()
     root.destroy()
-    return response == 'yes'
+    
+    return result['proceed'], result['file_path']
 
 def main(file_path=None):
-    if file_path is None:
-        print("Error: No file path provided. Please provide the path to the CSV file.")
-        print("Usage: python your_script_name.py path/to/your/data.csv")
-        return
-
-    # Show instructions and wait for user to accept
-    if not show_startup_instructions():
-        print("User declined. Exiting program.")
-        sys.exit() # Exit if user clicks "Decline" / "No"
+    # Show startup instructions and handle data source
+    proceed, final_file_path = show_startup_instructions(file_path)
+    
+    if not proceed:
+        print("User cancelled. Exiting program.")
+        sys.exit()
+    
+    if not final_file_path:
+        print("No data source available. Exiting program.")
+        sys.exit()
+    
+    if not os.path.exists(final_file_path):
+        print(f"Error: The file was not found at {final_file_path}")
+        sys.exit()
         
-    print("User accepted. Loading data and launching map...")
+    print(f"User accepted. Loading data from {final_file_path} and launching map...")
     try:
-        asset_map = load_data_from_csv(file_path)
+        asset_map = load_data_from_csv(final_file_path)
         asset_map.draw_map()
     except FileNotFoundError:
-        print(f"Error: The file was not found at {file_path}")
+        print(f"Error: The file was not found at {final_file_path}")
     except Exception as e:
         print(f"An unexpected error occurred while processing the file: {e}")
 
