@@ -15,7 +15,7 @@ class Component:
     """Represents a component of a node (e.g., blade, gearbox)."""
     def __init__(self, node, name, lifetime_years, serial_number, installation_date, 
                  replacement_cost=0, salvage_value=0, criticality_level="routine", 
-                 power_impact_factor=0, repair_hours=24):
+                 power_impact_factor=0, repair_hours=24, prediction_date=None):
         self.node = node
         self.name = name
         self.lifetime_years = lifetime_years
@@ -27,6 +27,7 @@ class Component:
         self.criticality_level = criticality_level
         self.power_impact_factor = power_impact_factor
         self.repair_hours = repair_hours
+        self.prediction_date = prediction_date or datetime.date.today()
         
         # Calculate derived properties
         self.remaining_lifetime_days = self.calculate_remaining_lifetime()
@@ -38,7 +39,7 @@ class Component:
     def calculate_remaining_lifetime(self):
         """Calculates the remaining operational days of the component."""
         try:
-            days_in_service = (datetime.date.today() - self.installation_date).days
+            days_in_service = (self.prediction_date - self.installation_date).days
             return max(0, self.lifetime_days - days_in_service)
         except AttributeError:
             print(f"No installation date available for component {self.name}")
@@ -81,8 +82,10 @@ class Component:
             return power_loss * hours_lost * energy_price
         return 0
 
-    def update_calculations(self):
+    def update_calculations(self, prediction_date=None):
         """Recalculate all derived properties (useful when base data changes)."""
+        if prediction_date:
+            self.prediction_date = prediction_date
         self.remaining_lifetime_days = self.calculate_remaining_lifetime()
         self.health_score = self.calculate_health_score()
         self.failure_probability = self.calculate_failure_probability()
@@ -139,11 +142,11 @@ class Node:
         
         return self.repair_priority_score
 
-    def update_calculations(self):
+    def update_calculations(self, prediction_date=None):
         """Recalculate all derived properties for this node."""
         # First update all components
         for component in self.components:
-            component.update_calculations()
+            component.update_calculations(prediction_date)
         
         # Then update node totals
         self.total_repair_cost = self.calculate_total_repair_cost()
@@ -188,12 +191,20 @@ class Map:
         self.path_artists = [] # To store plotted route for easy clearing
         self.selected_node_circle =  None
         self.node_circles = []  # To store node circles for visualization
+        self.prediction_date = datetime.date.today()
 
         
         # --- Configuration for interactive UI fields ---
         # This structure is agnostic to the field it can change.
         # To add a new field, simply add a new entry to this dictionary.
         self.interactive_fields = {
+            'prediction_date': {
+                'label': 'Prediction Date (YYYY-MM-DD)',
+                'initial': self.prediction_date.strftime('%Y-%m-%d'),
+                'target_obj': self,
+                'target_attr': 'prediction_date',
+                'type': 'date'
+            },
             'repair_threshold_ratio': {
                 'label': 'Repair Threshold Ratio',
                 'initial': '0.52',
@@ -211,7 +222,10 @@ class Map:
         }
         # Initialize attributes from the dictionary
         for key, config in self.interactive_fields.items():
-            setattr(config['target_obj'], config['target_attr'], config['type'](config['initial']))
+            if config['type'] == 'date':
+                setattr(config['target_obj'], config['target_attr'], self.prediction_date)
+            else:
+                setattr(config['target_obj'], config['target_attr'], config['type'](config['initial']))
 
     def add_node(self, node):
         """Add a node to the map."""
@@ -259,7 +273,7 @@ class Map:
     def update_all_calculations(self):
         """Update all calculations for all nodes and components."""
         for node in self.nodes:
-            node.update_calculations()
+            node.update_calculations(self.prediction_date)
         
         if self.nodes:
             self.generate_cost_matrix()
@@ -336,11 +350,13 @@ class Map:
         longitudes = [node.attributes['longitude'] for node in self.nodes]
         
         clusters = sorted(list({node.attributes.get('cluster_name', 'Unknown') for node in self.nodes}))
-        colors = plt.cm.get_cmap('tab10', len(clusters))
+        # Use tab20 colormap to avoid red and have more color options
+        colors = plt.cm.get_cmap('tab20', len(clusters))
         cluster_color_map = {cluster: colors(i) for i, cluster in enumerate(clusters)}
         node_colors = [cluster_color_map[node.attributes.get('cluster_name', 'Unknown')] for node in self.nodes]
 
         self.scatter = self.map_ax.scatter(latitudes, longitudes, c=node_colors, s=100, alpha=0.8, picker=True)
+        self.original_colors = node_colors.copy()  # Store original colors for resetting
         
         self.map_ax.set_title("Maintenance Priority Overview Map", fontsize=16)
         self.map_ax.set_xlabel("Latitude")
@@ -350,15 +366,25 @@ class Map:
         legend_elements = [plt.Line2D([0], [0], marker='o', color='w', label=cluster,
                                       markerfacecolor=color, markersize=10)
                            for cluster, color in cluster_color_map.items()]
+        # Add selected node legend entry
+        legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', label='Selected node',
+                                         markerfacecolor='red', markersize=10))
         self.map_ax.legend(handles=legend_elements, title="Clusters")
         
-        info_panel_ax = fig.add_axes([0.72, 0.55, 0.25, 0.35])
+        info_panel_ax = fig.add_axes([0.72, 0.65, 0.25, 0.25])
         info_panel_ax.set_title("Node Details")
         info_panel_ax.axis('off')
 
-        # --- Dynamic Input Fields ---
+        # --- Buttons --- (bottom-aligned with graph)
+        generate_button_ax = fig.add_axes([0.72, 0.10, 0.13, 0.06])
+        generate_button = Button(generate_button_ax, 'Generate Pathway')
+        
+        reset_button_ax = fig.add_axes([0.86, 0.10, 0.11, 0.06])
+        reset_button = Button(reset_button_ax, 'Reset Map')
+
+        # --- Dynamic Input Fields --- (just above buttons)
         text_boxes = {}
-        field_y_pos = 0.25
+        field_y_pos = 0.35
         for key, config in self.interactive_fields.items():
             ax_label = fig.add_axes([0.72, field_y_pos, 0.1, 0.04])
             ax_label.text(0.5, 0.5, config['label'], ha='center', va='center', fontsize=9)
@@ -376,13 +402,6 @@ class Map:
             text_box.on_submit(update_callback)
             text_boxes[key] = text_box
             field_y_pos -= 0.06 # Decrement y-position for the next field
-
-        # --- Buttons ---
-        generate_button_ax = fig.add_axes([0.72, 0.1, 0.13, 0.06])
-        generate_button = Button(generate_button_ax, 'Generate Pathway')
-        
-        reset_button_ax = fig.add_axes([0.86, 0.1, 0.11, 0.06])
-        reset_button = Button(reset_button_ax, 'Reset Map')
 
         def update_info_panel(node):
             info_panel_ax.clear()
@@ -420,26 +439,12 @@ class Map:
                     self.selected_node = self.nodes[node_index]
                     update_info_panel(self.selected_node)
 
-                    x, y = self.scatter.get_offsets()[node_index]
-
-                    # Remove previous circle if it exists
-                    for circle in self.node_circles:
-                        circle.remove()
-                    self.node_circles.clear()
-
-                    x, y = self.scatter.get_offsets()[node_index]
-
-
-                    # Create a circle in display coordinates
+                    # Reset all nodes to original colors
+                    current_colors = self.original_colors.copy()
+                    # Set selected node to red
+                    current_colors[node_index] = 'red'
+                    self.scatter.set_color(current_colors)
                     
-                    new_circle = patches.Circle(
-                        (x, y), radius=0.01,  # radius in data units
-                        color='red', fill=False, linewidth=2, zorder=10
-                    )
-
-                    self.map_ax.add_patch(new_circle)
-                    self.node_circles.append(new_circle)
-
                     fig.canvas.draw_idle()
 
 
@@ -513,13 +518,32 @@ class Map:
     def _create_update_callback(self, text, text_box, target_obj, attr, value_type):
         """A generic callback factory for handling text box submissions."""
         try:
-            new_value = value_type(text)
-            setattr(target_obj, attr, new_value)
-            text_box.color = 'white' # Reset color on success
-            print(f"Updated '{attr}' to {new_value}")
+            if value_type == 'date':
+                new_value = datetime.datetime.strptime(text, '%Y-%m-%d').date()
+                # Validate that the date is not before today
+                if new_value < datetime.date.today():
+                    messagebox.showerror("Invalid Date", "Prediction date cannot be before today's date.")
+                    text_box.color = '0.9'
+                    plt.gcf().canvas.draw_idle()
+                    return
+                setattr(target_obj, attr, new_value)
+                # Update all calculations with the new prediction date
+                if attr == 'prediction_date':
+                    self.update_all_calculations()
+                text_box.color = 'white'
+                print(f"Updated '{attr}' to {new_value}")
+            else:
+                new_value = value_type(text)
+                setattr(target_obj, attr, new_value)
+                text_box.color = 'white'
+                print(f"Updated '{attr}' to {new_value}")
         except ValueError:
-            print(f"Invalid input: '{text}'. Please enter a valid {value_type.__name__}.")
-            text_box.color = '0.9' # Indicate error with a gray background
+            if value_type == 'date':
+                messagebox.showerror("Invalid Date Format", "Please enter date in YYYY-MM-DD format.")
+                text_box.color = '0.9'
+            else:
+                print(f"Invalid input: '{text}'. Please enter a valid {value_type.__name__}.")
+                text_box.color = '0.9'
         plt.gcf().canvas.draw_idle()
 
 
@@ -588,7 +612,8 @@ def load_data_from_csv(file_path):
                 salvage_value=float(salvage_value),
                 criticality_level=criticality_level,
                 power_impact_factor=float(power_impact_factor),
-                repair_hours=float(repair_hours)
+                repair_hours=float(repair_hours),
+                prediction_date=datetime.date.today()
             )
             components_for_current_node.append(component)
         
