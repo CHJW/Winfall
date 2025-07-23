@@ -61,22 +61,39 @@ Our system calculates the **optimal maintenance pathway** by:
 
 ## Getting Started
 
-### Prerequisites
+### For Non-Technical Users (Recommended)
+
+#### Easy Installation - Download and Run
+1. **Download the Windows executable** (Winfall.exe) from the releases section
+2. **Double-click to run** - No Python installation required!
+3. **Follow the startup wizard** to generate data or use existing files
+
+The executable includes everything needed to run the application and works on any Windows PC.
+
+### For Developers
+
+#### Prerequisites
 - Python 3.7+
 - Required packages: `matplotlib`, `numpy`, `csv`, `datetime`
 
-### Quick Start
+#### Quick Start
 
-#### Option 1: Using Existing Data
+**Option 1: Using Existing Data**
 ```bash
 # Run with existing data file
 python main.py nodes_data.csv
 ```
 
-#### Option 2: Generate New Data (Recommended)
+**Option 2: Generate New Data (Recommended)**
 ```bash
 # Launch with integrated data generator
 python main.py
+```
+
+**Option 3: NixOS Users**
+```bash
+# Use nix-shell for proper environment
+nix-shell -p python3 python3Packages.matplotlib python3Packages.numpy python3Packages.tkinter --run "python main.py"
 ```
 
 The application will:
@@ -229,10 +246,16 @@ The application will:
 3. **Via Code**: Modify default values in `Map.__init__()` and `DataMakerGUI.default_values`
 
 ### Runtime Environment
-For Nix users, run with proper package environment:
+
+**For End Users**: Simply download and run the Windows executable - no setup required!
+
+**For Developers**: Install Python dependencies and run from source:
 ```bash
-nix-shell -p python3 python3Packages.matplotlib python3Packages.numpy python3Packages.tkinter --run "python main.py"
+pip install matplotlib numpy
+python main.py
 ```
+
+**To Build Windows Executable**: See `WINDOWS_BUILD_INSTRUCTIONS.md` for detailed PyInstaller setup on Windows.
 
 ## For AI Assistants: Development Guidance
 
